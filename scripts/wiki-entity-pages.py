@@ -13,7 +13,9 @@ Caching:
   changed since the last synthesis, the page is left alone.
 
 Auth:
-  Requires ANTHROPIC_API_KEY (source ~/.openclaw/env.sh).
+  Provider routing follows OUROWIKI_PROVIDER (anthropic | openai |
+  openai-compat). Defaults to anthropic with ANTHROPIC_API_KEY. See
+  wiki_provider.py for the full env-var contract.
 
 Usage:
   python3 wiki-entity-pages.py                    # synthesize all clusters
@@ -40,6 +42,10 @@ except ImportError:
     print("missing httpx: pip install --user httpx", file=sys.stderr)
     sys.exit(2)
 
+# Provider shim — handles Anthropic vs OpenAI-compatible routing.
+sys.path.insert(0, str(Path(__file__).parent))
+from wiki_provider import Provider  # noqa: E402
+
 WORKSPACE = Path(os.environ.get("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 INDEX_PATH = WORKSPACE / "memory" / "index.md"
 MEMORY_DIR = WORKSPACE / "memory"
@@ -48,10 +54,6 @@ WIKI_DIR = MEMORY_DIR / "wiki"
 WIKI_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_PATH = WIKI_DIR / ".entity-cache.json"
 MEMORYMD_PATH = WORKSPACE / "MEMORY.md"
-
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_VERSION = "2023-06-01"
-DEFAULT_MODEL = "claude-haiku-4-5"
 
 # Bump when the prompt or output format changes; forces re-synthesis on next run.
 # Recorded in the cache key so unchanged sources still re-synth when the prompt
@@ -341,45 +343,16 @@ def build_user_prompt(name: str, body_hint: str, sources: dict[str, str]) -> str
     return "\n".join(parts)
 
 
-async def call_haiku(client: httpx.AsyncClient, api_key: str, model: str,
-                     name: str, body_hint: str, sources: dict[str, str],
-                     retries: int = 3) -> tuple[str, dict]:
+async def call_synthesis(client: httpx.AsyncClient, provider: Provider,
+                         name: str, body_hint: str,
+                         sources: dict[str, str]) -> tuple[str, dict]:
     user = build_user_prompt(name, body_hint, sources)
-    body = {
-        "model": model,
-        "max_tokens": 2000,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user}],
-    }
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    last_err = None
-    for attempt in range(retries):
-        try:
-            r = await client.post(ANTHROPIC_URL, json=body, headers=headers, timeout=120.0)
-            if r.status_code == 200:
-                data = r.json()
-                content = data.get("content") or []
-                for c in content:
-                    if c.get("type") == "text":
-                        text = c.get("text", "").strip()
-                        usage = data.get("usage") or {}
-                        return text, usage
-                return "", {}
-            elif r.status_code in (429, 500, 502, 503, 504):
-                await asyncio.sleep(2 ** attempt)
-                continue
-            else:
-                last_err = f"http {r.status_code}: {r.text[:300]}"
-                break
-        except (httpx.HTTPError, asyncio.TimeoutError) as e:
-            last_err = str(e)
-            await asyncio.sleep(2 ** attempt)
-    print(f"  ! synthesis failed for {name}: {last_err}", file=sys.stderr)
-    return "", {}
+    text, usage = await provider.call(
+        client, SYSTEM_PROMPT, user, max_tokens=2000, timeout=120.0,
+    )
+    if not text:
+        print(f"  ! synthesis failed for {name}", file=sys.stderr)
+    return text, usage
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +395,7 @@ def render_page(name: str, slug: str, body_text: str,
 # Main
 # ---------------------------------------------------------------------------
 
-async def synthesize_one(client: httpx.AsyncClient, api_key: str, model: str,
+async def synthesize_one(client: httpx.AsyncClient, provider: Provider,
                          cluster: dict, cache: dict, force: bool,
                          dry_run: bool, sem: asyncio.Semaphore,
                          counters: dict) -> dict:
@@ -451,7 +424,7 @@ async def synthesize_one(client: httpx.AsyncClient, api_key: str, model: str,
         return {"slug": slug, "name": name, "status": "would-synth"}
 
     async with sem:
-        text, usage = await call_haiku(client, api_key, model, name, cluster["body"], sources)
+        text, usage = await call_synthesis(client, provider, name, cluster["body"], sources)
 
     if not text:
         counters["failures"] += 1
@@ -465,23 +438,32 @@ async def synthesize_one(client: httpx.AsyncClient, api_key: str, model: str,
         "name": name,
         "content_sha": sha,
         "synthesized_at": gen_iso,
-        "model": model,
+        "model": provider.model,
         "source_count": len(sources),
         "tokens": usage,
     }
 
+    # Anthropic returns input_tokens/output_tokens; OpenAI returns
+    # prompt_tokens/completion_tokens. Show whichever is present.
+    in_tok = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+    out_tok = usage.get("output_tokens") or usage.get("completion_tokens") or 0
     print(f"  + {name}: wrote {slug}.md ({len(page)} bytes, "
-          f"in={usage.get('input_tokens', 0)}, out={usage.get('output_tokens', 0)})",
+          f"in={in_tok}, out={out_tok})",
           file=sys.stderr)
     counters["fresh"] += 1
     return {"slug": slug, "name": name, "status": "fresh"}
 
 
 async def main_async(args):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key and not args.dry_run:
-        print("ANTHROPIC_API_KEY not set. Source ~/.openclaw/env.sh first.", file=sys.stderr)
-        sys.exit(2)
+    if not args.dry_run:
+        provider = Provider.from_env(
+            default_anthropic_model="claude-haiku-4-5",
+            default_openai_model="gpt-5-mini",
+            model_override=(args.model or None),
+        )
+        print(f"  {provider.describe()}", file=sys.stderr)
+    else:
+        provider = None  # dry-run path doesn't make calls
 
     if not INDEX_PATH.exists():
         print(f"missing {INDEX_PATH}; run wiki-compose.py first.", file=sys.stderr)
@@ -504,13 +486,14 @@ async def main_async(args):
     counters = {"fresh": 0, "cache_hits": 0, "skipped": 0, "failures": 0, "dry_run": 0}
 
     sem = asyncio.Semaphore(args.concurrency)
+    model_label = provider.model if provider else "(dry-run)"
     print(f"Processing {len(clusters)} cluster(s) "
-          f"(concurrency={args.concurrency}, model={args.model}, force={args.force}, dry_run={args.dry_run})...",
+          f"(concurrency={args.concurrency}, model={model_label}, force={args.force}, dry_run={args.dry_run})...",
           file=sys.stderr)
 
     async with httpx.AsyncClient() as client:
         tasks = [
-            synthesize_one(client, api_key or "", args.model, c, cache,
+            synthesize_one(client, provider, c, cache,
                           args.force, args.dry_run, sem, counters)
             for c in clusters
         ]
@@ -526,7 +509,8 @@ async def main_async(args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--model", default="",
+                    help="Model id override; takes precedence over OUROWIKI_MODEL.")
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--only", default="", help="Substring match on entity name or slug")
     ap.add_argument("--force", action="store_true", help="Ignore cache, re-synthesize all")

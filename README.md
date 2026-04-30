@@ -97,9 +97,9 @@ transcripts. Just made public — the goal of opening it up is to attract
 forks and competing designs, not to ship a polished product. Interfaces
 will move. Caches may invalidate. The pipeline order may shake out.
 
-## Running it
+## Quickstart
 
-ourowiki currently expects an
+ourowiki expects an
 [OpenClaw](https://github.com/openclaw/openclaw)-shaped workspace:
 
 ```
@@ -113,31 +113,104 @@ ourowiki currently expects an
 ```
 
 Generalizing the input adapter to other agent runtimes is on the
-[roadmap](docs/wiki-architecture.md#13-roadmap) (§13.5).
+[roadmap](docs/wiki-architecture.md#13-roadmap).
 
-Quick path:
+### One-step install
 
 ```bash
-export ANTHROPIC_API_KEY=...           # required by steps 3 and 8
-cd /path/to/your/openclaw-workspace
-git clone https://github.com/<you>/ourowiki .ourowiki
-
-bash    .ourowiki/scripts/wiki-extract.sh
-python3 .ourowiki/scripts/wiki-turns-extract.py
-python3 .ourowiki/scripts/wiki-turns-summarize.py    # LLM, cached
-python3 .ourowiki/scripts/wiki-sessions-compose.py
-python3 .ourowiki/scripts/wiki-month-pages.py
-python3 .ourowiki/scripts/wiki-compose.py
-python3 .ourowiki/scripts/wiki-entity-pages.py       # LLM, cached
-python3 .ourowiki/scripts/wiki-cross-refs.py
-python3 .ourowiki/scripts/wiki-implicit-links.py
-python3 .ourowiki/scripts/wiki-link-topics.py
+git clone https://github.com/injinj/ourowiki ~/code/ourowiki
+cd ~/code/ourowiki
+./install.sh
 ```
 
-(Or symlink `.ourowiki/scripts` into your workspace as `scripts/`.)
+The installer prompts for provider (`anthropic` / `openai` /
+`openai-compat`), API key, model, OpenClaw workspace path, and a cron
+expression. It writes `~/.ourowiki/env` (mode 600), runs the pipeline
+once so the first wiki regen is on disk before you walk away, and
+appends a daily-cron entry that re-runs the pipeline (incremental,
+free on cache hits).
 
-The first cold run takes a few minutes and costs about USD $0.05–$0.10
-in Claude Haiku calls. Subsequent runs are seconds and free.
+All prompts are skippable via flags:
+
+```bash
+./install.sh \
+  --provider openai \
+  --model gpt-5-mini \
+  --api-key sk-... \
+  --workspace ~/.openclaw/workspace \
+  --cron "0 4 * * *" \
+  --yes
+```
+
+Use `--no-cron` to skip cron registration; `--no-run` to skip the
+first-run pipeline pass.
+
+### Provider configuration
+
+Selection is driven by environment variables:
+
+| Variable | Purpose |
+|---|---|
+| `OUROWIKI_PROVIDER` | `anthropic` (default) / `openai` / `openai-compat` |
+| `OUROWIKI_MODEL`    | Model id override (per-script default otherwise) |
+| `ANTHROPIC_API_KEY` | Required when provider=anthropic |
+| `OPENAI_API_KEY`    | Required when provider=openai or openai-compat. Any non-empty string works for local servers that don't authenticate. |
+| `OPENAI_BASE_URL`   | Custom base URL (e.g. `http://localhost:8080/v1` for llama-server, OpenRouter URL, etc.). |
+| `ANTHROPIC_BASE_URL`| Custom Anthropic-compatible endpoint, optional. |
+
+**gpt-5 / o1 / o3 caveat:** reasoning models burn most of the
+`max_completion_tokens` budget on hidden reasoning tokens before
+producing visible content. ourowiki auto-detects these model families
+and bumps the per-call budget to 4096 tokens minimum so the response
+isn't empty. If you're hitting empty responses with another
+reasoning-class model not on the auto-detect list (`gpt-5*`, `o1*`,
+`o3*`, `o4*`), edit `_REASONING_MODEL_PREFIXES` in
+`scripts/wiki_provider.py`.
+
+### Manual invocation (no install.sh)
+
+If you'd rather not run a setup script, the pipeline is just eleven
+ordered commands:
+
+```bash
+export OUROWIKI_PROVIDER=openai
+export OPENAI_API_KEY=sk-...
+export OUROWIKI_MODEL=gpt-5-mini
+export OPENCLAW_WORKSPACE=~/.openclaw/workspace
+cd $OPENCLAW_WORKSPACE
+
+bash    ~/code/ourowiki/scripts/wiki-extract.sh
+python3 ~/code/ourowiki/scripts/wiki-turns-extract.py
+python3 ~/code/ourowiki/scripts/wiki-turns-summarize.py    # LLM, cached
+python3 ~/code/ourowiki/scripts/wiki-sessions-compose.py
+python3 ~/code/ourowiki/scripts/wiki-month-pages.py
+python3 ~/code/ourowiki/scripts/wiki-compose.py
+python3 ~/code/ourowiki/scripts/wiki-entity-pages.py       # LLM, cached
+python3 ~/code/ourowiki/scripts/wiki-cross-refs.py
+python3 ~/code/ourowiki/scripts/wiki-implicit-links.py
+python3 ~/code/ourowiki/scripts/wiki-link-topics.py
+```
+
+### Cost & runtime
+
+First cold run: ~3–5 minutes wall-clock, ~$0.05–$0.10 in LLM calls
+(Anthropic Haiku rates; OpenAI gpt-5-mini is in roughly the same
+ballpark). Subsequent runs hit the content-hash cache for ~100% of
+turns and entities, finishing in seconds at zero LLM cost.
+
+### Validated provider configurations
+
+Validated end-to-end against a fresh isolated workspace as of
+2026-04-30:
+
+- `OUROWIKI_PROVIDER=anthropic` with `claude-haiku-4-5` (original)
+- `OUROWIKI_PROVIDER=openai` with `gpt-5-mini`
+
+Not yet smoke-tested but expected to work given they speak the same
+API shape: `OUROWIKI_PROVIDER=openai-compat` against llama-server,
+Ollama (OpenAI-compatible mode), OpenRouter, LiteLLM. If you
+verify any of these, please open an issue with model + base URL so
+we can list it here.
 
 ## Operator's guide
 

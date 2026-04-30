@@ -10,12 +10,26 @@ Writes: ~/.openclaw/workspace/memory/sessions/.summaries.json   (cache)
 Concurrency: configurable parallel workers (default 8). Re-runs are cheap
 because cached entries are reused.
 
-Auth: reads ANTHROPIC_API_KEY from env. Source ~/.openclaw/env.sh first.
+Auth: provider routing follows OUROWIKI_PROVIDER (anthropic | openai |
+openai-compat). Defaults to anthropic with ANTHROPIC_API_KEY. See
+wiki_provider.py for the full env-var contract.
 
 Usage:
-  python3 wiki-turns-summarize.py [--model claude-haiku-4-5] [--concurrency 8]
+  python3 wiki-turns-summarize.py [--model <id>] [--concurrency 8]
                                    [--limit-per-session N]   # smoke test
                                    [--only-uuid <uuid>]      # one session
+
+  # Anthropic (default):
+  ANTHROPIC_API_KEY=... python3 wiki-turns-summarize.py
+
+  # OpenAI:
+  OUROWIKI_PROVIDER=openai OPENAI_API_KEY=... python3 wiki-turns-summarize.py
+
+  # Local llama-server / Ollama / OpenRouter / etc.:
+  OUROWIKI_PROVIDER=openai-compat OPENAI_API_KEY=local \
+  OPENAI_BASE_URL=http://localhost:8080/v1 \
+  OUROWIKI_MODEL=qwen2.5-coder-32b \
+      python3 wiki-turns-summarize.py
 """
 from __future__ import annotations
 
@@ -33,14 +47,15 @@ except ImportError:
     print("missing httpx: pip install httpx (or use uv)", file=sys.stderr)
     sys.exit(2)
 
+# Provider shim — handles Anthropic vs OpenAI-compatible routing.
+sys.path.insert(0, str(Path(__file__).parent))
+from wiki_provider import Provider  # noqa: E402
+
 WORKSPACE = Path(os.environ.get("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 TURNS_DIR = Path(os.environ.get("WIKI_BUILD_DIR", "/tmp/wiki-build")) / "turns"
 SESSIONS_OUT_DIR = WORKSPACE / "memory" / "sessions"
 SESSIONS_OUT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_PATH = SESSIONS_OUT_DIR / ".summaries.json"
-
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_VERSION = "2023-06-01"
 
 SYSTEM_PROMPT = (
     "You write tight one-line summaries of an assistant's response to a user request. "
@@ -70,49 +85,19 @@ def save_cache(cache: dict[str, str]) -> None:
     tmp.replace(CACHE_PATH)
 
 
-async def call_haiku(client: httpx.AsyncClient, api_key: str, model: str,
-                     user_text: str, assistant_text: str, retries: int = 3) -> str:
-    body = {
-        "model": model,
-        "max_tokens": 80,
-        "system": SYSTEM_PROMPT,
-        "messages": [
-            {"role": "user", "content": USER_TEMPLATE.format(user=user_text, assistant=assistant_text)}
-        ],
-    }
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    last_exc = None
-    for attempt in range(retries):
-        try:
-            r = await client.post(ANTHROPIC_URL, json=body, headers=headers, timeout=60.0)
-            if r.status_code == 200:
-                data = r.json()
-                content = data.get("content") or []
-                for c in content:
-                    if c.get("type") == "text":
-                        return c.get("text", "").strip().splitlines()[0][:300]
-                return ""
-            elif r.status_code in (429, 500, 502, 503, 504):
-                # Retryable: exponential backoff
-                await asyncio.sleep(2 ** attempt)
-                continue
-            else:
-                # Non-retryable — log error and return empty so we don't crash
-                print(f"  [http {r.status_code}] {r.text[:200]}", file=sys.stderr)
-                return ""
-        except (httpx.HTTPError, asyncio.TimeoutError) as e:
-            last_exc = e
-            await asyncio.sleep(2 ** attempt)
-    print(f"  [retry exhausted] {last_exc}", file=sys.stderr)
-    return ""
+async def call_summary(client: httpx.AsyncClient, provider: Provider,
+                       user_text: str, assistant_text: str) -> str:
+    user = USER_TEMPLATE.format(user=user_text, assistant=assistant_text)
+    text, _usage = await provider.call(
+        client, SYSTEM_PROMPT, user, max_tokens=80, timeout=60.0,
+    )
+    if not text:
+        return ""
+    return text.strip().splitlines()[0][:300]
 
 
 async def summarize_session(uuid: str, turns: list[dict], cache: dict[str, str],
-                            client: httpx.AsyncClient, api_key: str, model: str,
+                            client: httpx.AsyncClient, provider: Provider,
                             sem: asyncio.Semaphore, save_every: int,
                             counters: dict[str, int]) -> list[dict]:
     """Summarize all turns of one session; return enriched list."""
@@ -124,8 +109,8 @@ async def summarize_session(uuid: str, turns: list[dict], cache: dict[str, str],
             counters["cache_hits"] += 1
         else:
             async with sem:
-                summary = await call_haiku(
-                    client, api_key, model, turn["user_text"], turn["assistant_text"]
+                summary = await call_summary(
+                    client, provider, turn["user_text"], turn["assistant_text"]
                 )
             if summary:
                 cache[cache_key] = summary
@@ -142,10 +127,12 @@ async def summarize_session(uuid: str, turns: list[dict], cache: dict[str, str],
 
 
 async def main_async(args):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("ANTHROPIC_API_KEY not set. Source ~/.openclaw/env.sh first.", file=sys.stderr)
-        sys.exit(2)
+    provider = Provider.from_env(
+        default_anthropic_model="claude-haiku-4-5",
+        default_openai_model="gpt-5-mini",
+        model_override=(args.model or None),
+    )
+    print(f"  {provider.describe()}", file=sys.stderr)
 
     if not TURNS_DIR.exists():
         print(f"missing {TURNS_DIR} — run wiki-turns-extract.py first", file=sys.stderr)
@@ -172,12 +159,12 @@ async def main_async(args):
                 turns = turns[: args.limit_per_session]
             total_turns += len(turns)
             tasks.append((f.stem, turns, summarize_session(
-                f.stem, turns, cache, client, api_key, args.model, sem,
+                f.stem, turns, cache, client, provider, sem,
                 args.save_every, counters
             )))
 
         print(f"summarizing {total_turns} turns across {len(tasks)} sessions "
-              f"(concurrency={args.concurrency}, model={args.model})...")
+              f"(concurrency={args.concurrency}, model={provider.model})...")
         t0 = time.time()
         results = await asyncio.gather(*[t[2] for t in tasks])
         elapsed = time.time() - t0
@@ -201,7 +188,8 @@ async def main_async(args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="claude-haiku-4-5")
+    ap.add_argument("--model", default="",
+                    help="Model id override; takes precedence over OUROWIKI_MODEL.")
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--save-every", type=int, default=20, help="Save cache every N fresh summaries")
     ap.add_argument("--limit-per-session", type=int, default=0, help="Smoke test: max turns per session (0=all)")
