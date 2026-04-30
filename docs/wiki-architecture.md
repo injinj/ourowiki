@@ -18,19 +18,45 @@ markdown, and the basic shape of an LLM API.
 
 ### What this is for
 
-This is the continuity layer for a working engineer who uses an AI
-assistant heavily across a portfolio of long-running projects. The
-user maintains production codebases, has a dozen side projects in
-flight at any given time, runs work across multiple physical machines,
-and talks to an agent that has no memory between sessions. The system
-exists so that the *user* (and the agent on the user's behalf) can
-recall what was decided about which project six weeks ago without
-re-reading every transcript.
+This is a shared continuity layer for two parties with complementary
+memory limits.
+
+**The agent has zero session-to-session memory.** Every fresh
+conversation starts with the assistant knowing nothing about the user's
+codebases, the decisions made last week, the bug that was tracked down
+last month, or the conventions established three months ago. The
+agent's amnesia is total and resets on every cold start.
+
+**The human has gradient memory loss.** The author of this system
+maintains a stack of long-running projects — a market-data library,
+a pub/sub messaging system, a multicast-aware caching tier,
+contributions to an agent runtime, plus a dozen smaller side
+things. At any given moment one or two are active and the rest
+are dormant. When a dormant project comes back — "what state is
+raimd in? what was the last thing I tried with the virtual-dispatch
+refactor?" — the human can no more recall the specifics than the
+agent can.
+
+The wiki addresses both at once. When the human comes back to a
+dormant project, they read the entity page (`memory/wiki/raimd.md`)
+to reconstruct context. When the agent starts a fresh session and
+needs context to be useful, it reads the same entity page. **Same
+artifact, two readers, both refreshed by the same pipeline.**
+
+That shared-substrate property is the design's distinguishing feature.
+Competitor systems treat the wiki as a thing the LLM produces for the
+LLM (the cache that lets the agent skip RAG) or as a thing the human
+produces for the human (a Zettelkasten with an LLM helper). This
+system treats it as the *single* view of project state that both
+parties draw from. The fact that an LLM does the synthesis is an
+implementation detail — the artifact would be useful to the human
+even if no agent ever read it.
 
 It is not a research tool. It does not ingest papers. It has no
 opinion about the SOTA. It is what you get when an engineer notices
-that their agent's amnesia is becoming an operational problem and
-builds the smallest deterministic layer that fixes it.
+that both they and their agent are failing to retain context across
+long-running work, and builds the smallest deterministic layer that
+fixes both at once.
 
 ### Where it sits in the broader memory-systems landscape
 
@@ -881,7 +907,79 @@ taking them seriously.
 
 ---
 
-## 12. What this system is not
+## 12. Complementary to issue/commit-history-driven workflows
+
+A wiki of synthesized entity pages is one half of a project's memory.
+The other half lives in version control and issue trackers — the
+public record of what got merged, what got reverted, what was filed
+as a bug, what was closed as won't-fix, what blocked what. Tools that
+drive an agent against that history (clawbot-style issue triage,
+GitHub PR review bots, commit-log digesters, release-note generators)
+are doing something genuinely different from what ourowiki does, and
+the two are best understood as complementary.
+
+A way to draw the split:
+
+- **External record** — GitHub issues, PRs, commits, CI logs, code
+  review comments. Public (or at least team-visible). Records *what
+  changed* and *who reviewed it*. Time-ordered, immutable, indexed by
+  the host platform's search. Tools that reason about this record
+  (clawbot, Conventional-commit summarizers, autonomous-PR agents) work
+  by walking the history and inferring intent from diffs and comments.
+
+- **Internal record** — conversations between the engineer and the
+  agent in which the design got argued out, the bug got chased, the
+  approach got abandoned and replaced. Private. Records *what was
+  decided* and *why*. Time-ordered if you read transcripts directly,
+  topic-ordered if you read the synthesized wiki. Tools that reason
+  about this record (ourowiki, lucasastorian/llmwiki, OmegaWiki, etc.)
+  work by synthesizing across many conversations into per-topic pages.
+
+Neither half answers the questions the other half answers.
+
+- *"What went into the last release?"* is an external-record question.
+  ourowiki has no idea; ask the commit log.
+- *"Why does raimd's writer architecture use multiple inheritance
+  instead of a vtable?"* is an internal-record question. The commit
+  log shows the change; the wiki page captures the discussion that led
+  to it.
+- *"What's the current state of the MDFieldIter rewrite?"* needs both.
+  The wiki page tells you what the engineer was trying and why; the
+  branch state and recent commits tell you how far it actually got.
+
+This is a real distinction in practice. An agent helping an engineer
+resume dormant work needs both records on hand: the wiki page to
+rebuild the conceptual context, the commit/PR history to learn what
+the code itself currently looks like. Either alone is incomplete.
+The agent reading both is approximately as well-oriented as the
+engineer was the day they paused the work.
+
+ourowiki does not try to be the external-record tool. The pipeline
+ignores git status, doesn't crawl issues, doesn't cite commits in
+entity pages (though sources sometimes mention them in passing).
+That's a deliberate scope boundary, not an oversight. The external
+record is already an excellent first-class artifact maintained by
+GitHub and git itself; tools like clawbot are already excellent
+readers of it. ourowiki sits next to those tools, not in their place.
+
+The practical setup an engineer ends up with:
+
+- **clawbot or similar** — maintains the external record, surfaces
+  GitHub issues to triage, drafts PRs, summarizes review feedback.
+- **ourowiki** — maintains the internal record, surfaces the
+  conceptual state of long-running projects, lets a fresh agent (or
+  a returning human) pick up where things were left off.
+- **A vector index over both corpora** — partial-recall lookup that
+  cuts across the topic / time / record-type axes when the user knows
+  enough to recognize what they're looking for but not enough to
+  navigate to it.
+
+An engineer with all three has a working continuity layer. Removing
+any one of them breaks a real query class.
+
+---
+
+## 13. What this system is not
 
 To set expectations precisely:
 
@@ -902,7 +1000,7 @@ To set expectations precisely:
 
 ---
 
-## 13. Roadmap
+## 14. Roadmap
 
 In descending order of "how much would this make the user's working
 life better":
@@ -941,7 +1039,7 @@ author's, your roadmap will look different. That's expected.
 
 ---
 
-## 14. How to read the code
+## 15. How to read the code
 
 Three orientation paths depending on what's interesting:
 
@@ -963,7 +1061,7 @@ documentation.
 
 ---
 
-## 15. Provenance
+## 16. Provenance
 
 The system was built in conversation between one human (Chris) and the
 agent that wrote this paper (Chesswitch, an OpenClaw-resident assistant)

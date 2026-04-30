@@ -31,18 +31,37 @@ that built it, including the conversation that named it.
 
 ## What is this for?
 
-This is the continuity layer for a working engineer who uses an AI
-assistant heavily across long-running production projects and a stack
-of side projects. The author maintains shipped codebases, runs work
-across multiple machines, and talks to an agent that has no memory
-between sessions. The system exists so that the user (and the agent
-on the user's behalf) can recall what was decided about which project
-six weeks ago without re-reading every transcript.
+This is a **shared continuity layer** for two parties with
+complementary memory limits:
 
-It is **not** a research tool. It does not ingest papers. It has no
-opinion about the SOTA. It is what falls out when an engineer notices
-that their agent's amnesia is becoming an operational problem and
-builds the smallest deterministic layer that fixes it.
+- **The agent** has zero session-to-session memory. Every fresh
+  conversation starts cold.
+- **The human** has gradient memory loss across a stack of
+  long-running projects. When a dormant project comes back — *what
+  state is `raimd` in? what was the last thing I tried with the
+  virtual-dispatch refactor?* — the human can no more recall the
+  specifics than the agent can.
+
+ourowiki produces one entity page per recurring project, synthesized
+from the conversation transcripts where the work actually happened.
+When the human comes back to a dormant project, they read the page
+to rebuild context. When the agent starts fresh and needs context to
+be useful, it reads the *same page*. Same artifact, two readers,
+both refreshed by the same pipeline.
+
+This is the design's distinguishing feature. Most LLM-wiki systems
+treat the wiki as a thing the LLM produces for the LLM (the cache
+that lets it skip RAG) or a thing the human produces for the human
+(a Zettelkasten with an LLM helper). ourowiki treats it as the
+*single* view of project state that both parties draw from. The
+fact that an LLM does the synthesis is an implementation detail.
+
+ourowiki is **complementary**, not competitive, to issue / commit /
+PR-driven agent workflows like clawbot. Those tools maintain the
+*external* record of a project (what got merged, what's broken,
+what's blocked); ourowiki maintains the *internal* record (what was
+decided and why). An engineer resuming dormant work needs both. See
+the white paper's §12 for the full split.
 
 If you're looking for a Karpathy-faithful implementation of the
 LLM-wiki pattern with `ingest` / `compile` / `query` / `lint` verbs,
