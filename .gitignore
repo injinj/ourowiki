@@ -1,0 +1,20 @@
+# Caches written by the pipeline (regenerable, not source)
+*/.summaries.json
+*/.entity-cache.json
+
+# Build artifacts
+/tmp/wiki-build/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
