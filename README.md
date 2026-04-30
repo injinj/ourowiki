@@ -29,20 +29,29 @@ caching throughout, idempotent end-to-end.
 The name is *ouroboros* + *wiki* — the system indexes the conversations
 that built it, including the conversation that named it.
 
-## Why does this exist?
+## What is this for?
 
-Most personal knowledge systems for LLMs fall into one of two camps:
+This is the continuity layer for a working engineer who uses an AI
+assistant heavily across long-running production projects and a stack
+of side projects. The author maintains shipped codebases, runs work
+across multiple machines, and talks to an agent that has no memory
+between sessions. The system exists so that the user (and the agent
+on the user's behalf) can recall what was decided about which project
+six weeks ago without re-reading every transcript.
 
-- **Vector search over raw notes.** Returns chunks. No synthesis.
-- **Hand-curated wiki.** Beautiful structure. Doesn't scale to 200 pages
-  per year on top of a day job.
+It is **not** a research tool. It does not ingest papers. It has no
+opinion about the SOTA. It is what falls out when an engineer notices
+that their agent's amnesia is becoming an operational problem and
+builds the smallest deterministic layer that fixes it.
 
-ourowiki is a third thing. The LLM does the synthesis it's actually good
-at (summarize one turn; write one entity-shaped page). Deterministic code
-does everything else (parse JSONL, deduplicate session variants, build
-the alias map, resolve cross-references, scan body prose for unlinked
-mentions, generate the backlink graph, render the master index).
-Caching is content-addressable, so re-runs cost nothing.
+If you're looking for a Karpathy-faithful implementation of the
+LLM-wiki pattern with `ingest` / `compile` / `query` / `lint` verbs,
+an MCP server, and paragraph-level claim citations, see
+[`atomicmemory/llm-wiki-compiler`](https://github.com/atomicmemory/llm-wiki-compiler)
+or [`skyllwt/OmegaWiki`](https://github.com/skyllwt/OmegaWiki). Those
+are different (and excellent) systems aimed at AI research workflows.
+This one is shaped around a different goal. The white paper's §11
+lays out where and why.
 
 ## Features
 

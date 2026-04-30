@@ -16,6 +16,24 @@ markdown, and the basic shape of an LLM API.
 
 ## 1. Introduction
 
+### What this is for
+
+This is the continuity layer for a working engineer who uses an AI
+assistant heavily across a portfolio of long-running projects. The
+user maintains production codebases, has a dozen side projects in
+flight at any given time, runs work across multiple physical machines,
+and talks to an agent that has no memory between sessions. The system
+exists so that the *user* (and the agent on the user's behalf) can
+recall what was decided about which project six weeks ago without
+re-reading every transcript.
+
+It is not a research tool. It does not ingest papers. It has no
+opinion about the SOTA. It is what you get when an engineer notices
+that their agent's amnesia is becoming an operational problem and
+builds the smallest deterministic layer that fixes it.
+
+### Where it sits in the broader memory-systems landscape
+
 Personal "second-brain" / "memory" systems for large language models
 tend to land in one of three places:
 
@@ -29,20 +47,34 @@ tend to land in one of three places:
    publicly and which a wave of public implementations is now
    exploring. The LLM compiles raw sources into an interlinked
    markdown wiki once and maintains it incrementally; queries hit the
-   compiled artifact, not the raw chunks. §11 surveys the public
-   implementations as of late April 2026.
+   compiled artifact, not the raw chunks.
 
-This paper describes a system in family (3) that's shaped
-differently from the other public implementations along three axes:
+This paper describes a system in family (3), but with a different
+optimization target than the other public implementations. They are
+largely aimed at AI researchers organizing papers, agentic research
+workflows, or general document-knowledge-base tooling. This system
+is aimed at one specific user: a senior engineer with shipped code
+in production whose agent needs to remember the last six months of
+work.
+
+The shape of the system follows from that target:
 
 - **Conversation transcripts and daily journal notes are the primary
   input**, not documents dropped into a `sources/` directory.
+  An engineer's working knowledge lives in the conversations where
+  decisions got made, not in a folder of papers waiting to be read.
 - **Cross-references and backlinks are resolved by deterministic
   post-passes**, not by the LLM, with idempotence enforced and
-  verified end-to-end.
-- **Vector retrieval is kept** as an orthogonal channel rather than
-  argued away — the wiki and the embeddings answer different
-  questions and the two tiers are cheap to maintain together.
+  verified end-to-end. This thing has to run silently in the
+  background, possibly on a cron, and not introduce drift.
+- **Vector retrieval is kept** as an orthogonal channel. People
+  remember by topic *and* by time *and* by partial recall; an
+  engineer debugging "didn't I see this exact stack trace four
+  months ago?" needs all three.
+- **The LLM is treated as the prose synthesizer of last resort.**
+  Not because LLMs are bad, but because every byte the LLM writes is
+  a byte that has to be cached, invalidated, and trusted, and the
+  user already knows where deterministic code is the better tool.
 
 The system was built by one person on top of an agent runtime called
 OpenClaw. Everything is plain markdown on disk. Nothing in the design
@@ -612,231 +644,240 @@ Both live at the same path. Both are kept fresh by the same pipeline run.
 
 ---
 
-## 11. Contrast with Karpathy's sketch and the public landscape
+## 11. Different goals, adjacent problems
 
-*This section was rewritten on 2026-04-30 after the author noticed that
-"karpathy-llm-wiki" returned 586 GitHub repositories, most updated in
-the previous 48 hours. Several are mature implementations. Honest
-contrast requires comparing against them, not just the sketch.*
+*Original draft of this section contrasted ourowiki against Karpathy's
+sketch as if the two were aiming at the same target. They are not.
+Karpathy is publishing patterns to accelerate AI research; ourowiki is
+the continuity layer for a working engineer's agent. Different goals
+mean the comparison goes in a different direction.*
 
-### 11.1 The Karpathy pattern, briefly
+### 11.1 What Karpathy is doing
 
-Andrej Karpathy has sketched a personal-knowledge architecture in public
-talks and tweets: an LLM-owned directory of markdown files, an `index.md`
-content catalog, a `log.md` chronological record, three operations
-(`ingest`, `query`, `lint`), a schema doc (`CLAUDE.md` / `AGENTS.md`)
-describing how the LLM should behave, and the claim that at moderate
-scale (hundreds of pages) **synthesis plus a hand-readable catalog can
-replace vector RAG entirely** because the synthesis already happened.
+Karpathy's LLM-wiki sketch and the wave of public implementations
+building on it are aimed, broadly, at AI research workflows: ingest
+papers, compile a knowledge base, query it, generate ideas, write
+papers, manage citations. The 586 repositories chasing the pattern
+as of late April 2026 are mostly tools for AI researchers and
+knowledge workers organizing externally-sourced reference material.
 
-It is a sketch, not an implementation. Multiple groups have implemented
-it in the public.
+It's a worthy target. Accelerating the SOTA in research-agent
+tooling has obvious leverage: every researcher who adopts a better
+workflow does better research. Karpathy seeds patterns and the
+ecosystem amplifies them.
 
-### 11.2 Three reference implementations to compare against
+Three implementations stand out as the most substantial executions:
 
-From skim-readings of READMEs in late April 2026, the three most
-substantial public implementations of the pattern are:
+- **`atomicmemory/llm-wiki-compiler`** — a faithful CLI implementation
+  of the pattern. `ingest|compile|query|lint|watch|serve`, candidate
+  review queue, page-kind schema, epistemic frontmatter, paragraph-
+  level claim citations, MCP server.
+- **`skyllwt/OmegaWiki`** — a research-lifecycle platform from PKU's
+  DAIR Lab. 24 slash commands across paper ingestion, idea generation,
+  experiment design, paper writing, and rebuttal. Nine typed entity
+  kinds and a daily-arXiv cron.
+- **`lucasastorian/llmwiki`** — folder-watcher with a browser UI and
+  MCP integration, filesystem-as-source-of-truth, hosted variant at
+  llmwiki.app.
 
-**`atomicmemory/llm-wiki-compiler`** — the most faithful Karpathy
-implementation. CLI tool (`llmwiki ingest|compile|query|lint|watch|serve`)
-with two-phase compile (concept extraction then page generation),
-incremental hash-based change detection, candidate review queue
-(`compile --review` writes to `.llmwiki/candidates/` for inspection),
-page-kind schema (`concept` / `entity` / `comparison` / `overview`),
-epistemic frontmatter (`confidence`, `provenanceState`,
-`contradictedBy`, `inferredParagraphs`), paragraph-level claim citations
-with line ranges (`^[source.md:42-58]`), and an MCP server so any
-Claude/Cursor agent can drive the pipeline. Inputs are arbitrary
-files/URLs dropped into a `sources/` directory.
+These are good systems for the people they're built for. None of
+them is the system the present author needed.
 
-**`skyllwt/OmegaWiki`** — a research-lifecycle platform built around
-the Karpathy pattern. 24 Claude Code slash commands spanning
-`/ingest /discover /ideate /novelty /exp-design /exp-run /paper-plan
-/paper-draft /paper-compile /rebuttal`, etc. Nine typed entity kinds
-(`Paper / Concept / Topic / Person / Idea / Experiment / Claim /
-Summary / Foundation`) with a typed semantic edge graph
-(`same_problem_as`, `improves_on`, `challenges`, `surveys`, ...).
-Daily-arXiv cron via GitHub Actions. Designed for an academic-research
-workflow from paper ingestion through publication and rebuttals.
+### 11.2 What this system is doing
 
-**`lucasastorian/llmwiki`** — folder-watcher with browser UI and
-MCP integration. Filesystem-as-source-of-truth (so the SQLite FTS5
-index is purely derived and rebuildable). Workspace = one MCP server.
-MCP tools (`guide`, `search`, `read`, `write`, `delete`) let an attached
-Claude write pages directly to disk. PDF ingestion via pdf-oxide;
-optional Mistral OCR for tables. A hosted variant exists at llmwiki.app.
+The author of ourowiki is not an AI researcher. He is an engineer
+maintaining production codebases (a market-data library, a pub/sub
+messaging system, a multicast-aware caching tier, contributions to
+an agent runtime) with a stack of side projects on top. The agent
+that assists this work has no memory between sessions. Each fresh
+conversation begins with the agent re-asking what it should already
+know.
 
-Each is interesting in its own right; together they bracket roughly
-the full design space the Karpathy sketch points at. ourowiki sits
-slightly outside that space rather than inside it. Here is where.
+That's the operational problem. It is not "organize my reference
+library." It is "keep my agent and my future-self oriented across
+six months of conversations spanning a dozen projects and two
+machines." The shape of the system follows directly:
 
-### 11.3 Where ourowiki is genuinely shaped differently
+- **Inputs are conversations, not documents**, because the things
+  that need to be remembered are decisions made and bugs found in
+  agent sessions, not papers downloaded from arXiv. The corpus
+  arrives passively as a side-effect of the user doing their job.
+- **Linking is deterministic**, because the LLM is already expensive
+  and slow on the synthesis step, and "is `raimd` mentioned in this
+  paragraph" is a regex problem.
+- **Idempotence is enforced**, because this thing is going to run
+  unattended on a cron eventually and any drift compounds across
+  weeks before the user notices.
+- **Vector retrieval is kept**, because debugging "didn't I see this
+  exact stack trace four months ago?" needs partial-recall lookup,
+  which is the one thing wiki-style synthesis can't do.
+- **The LLM is the prose synthesizer of last resort**, because every
+  byte the LLM writes is a byte that has to be cached, invalidated,
+  and trusted, and the user has been paid to write deterministic code
+  for twenty-five years.
 
-**Conversation transcripts as the primary input.** All three reference
-implementations expect documents — papers, PDFs, articles, notes — to
-be ingested. The user is doing some explicit "add this to my wiki"
-gesture. ourowiki's primary input is the JSONL conversation transcript
-produced by an agent runtime: an immutable record of every back-and-forth
-between human and assistant, including tool calls, errors, retries, and
-abandoned threads. Plus a human-authored daily log. The papers and
-articles are *referenced* in those transcripts but they aren't the
-corpus.
+### 11.3 Why the gaps with llm-wiki-compiler are not gaps
 
-This is a different ergonomic choice. Document-driven wikis ask you
-to curate inputs deliberately. ourowiki captures whatever you've already
-done with an agent and tries to make sense of it after the fact.
-Neither is strictly better. They serve different users and different
-use cases. The reference implementations win on "organize a research
-folder"; ourowiki wins on "surface what I worked on across all my
-agent sessions last month, including conversations I forgot I had."
+Reading the previous draft of this section back, it implicitly
+assumed that ourowiki should grow into a Karpathy-faithful
+implementation over time — that the absence of an `ingest` verb, a
+lint pass, paragraph-level citations, epistemic metadata, a candidate
+review queue, an MCP server, and a page-kind schema was a backlog to
+work through.
 
-**Two-tier deterministic cross-link resolution.** All three reference
-implementations rely on the LLM to write `[[wikilinks]]` in the synthesized
-prose. ourowiki explicitly does not: the LLM proposes related-name
-strings as plain text in a `## Cross-references` block, and two
-deterministic post-passes resolve them. Layer 1 (`wiki-cross-refs.py`)
-rewrites explicit relations and builds a backlink graph. Layer 2
-(`wiki-implicit-links.py`) scans body prose for first-mention links
-to known entity tokens, with case heuristics, protection spans, and a
-pre-scan idempotence anchor. The idempotence proof is in §6.2.
+It isn't. Most of those features are answers to questions ourowiki
+doesn't ask:
 
-This is the most distinctive piece of engineering in ourowiki and
-the one with no equivalent in the reference implementations. Whether
-it's *better* than `[[wikilinks]]`-style explicit linking depends on
-taste. It's clearly *different* and the design rationale is documented.
+- **`ingest` verb.** ourowiki's input arrives passively. The user
+  doesn't have a folder of papers waiting to be ingested. If a paper
+  matters, it gets discussed in a conversation; the conversation is
+  the source of record. An ingest verb would be solving a problem
+  the user doesn't have.
+- **Paragraph-level claim citations.** Useful when the synthesis is
+  going to be cited in turn (a survey, a lit review, a paper). The
+  user's entity pages are read by the user and the user's agent.
+  Page-level source attribution is sufficient.
+- **Epistemic metadata** (`confidence`, `contradictedBy`,
+  `inferredParagraphs`). Useful when consumers downstream need to
+  know how trustworthy each page is. The downstream consumer here
+  is the user, who already knows.
+- **Candidate review queue.** Useful when synthesis errors are
+  costly to revert. ourowiki regenerates pages cheaply and the
+  user reads what gets generated; review-before-merge would slow
+  the loop without adding safety.
+- **Page-kind schema.** Useful when the system is general-purpose
+  enough to need typed pages. The user's pages are all about
+  recurring projects and infrastructure; one shape works.
+- **MCP server.** Useful when the system has to plug into multiple
+  agent runtimes. The user has one agent runtime he contributes to
+  upstream; OpenClaw-shaped is fine.
+- **Lint pass.** This one is actually useful and worth building.
+  Catching contradictions across daily logs and finding orphan
+  entities helps the user and the agent both. It stays on the
+  roadmap not because llm-wiki-compiler has it but because the
+  user would benefit from it.
 
-**Idempotence as a load-bearing property.** The white paper repeatedly
-asserts that re-running the pipeline twice produces byte-identical
-output. None of the reference implementations make this claim that
-strongly. llm-wiki-compiler comes closest with its hash-based
-incremental compile, but its candidate-review and confidence-merging
-logic introduces state transitions that aren't strictly idempotent.
-ourowiki's idempotence is enforced at every Tier 3 step and verified
-end-to-end. This matters less for users who only ever run the
-pipeline by hand, and more for users who want to wire it into a cron
-job without worrying about drift.
+The goal isn't to catch up with the reference implementations. The
+goal is to keep solving *this* user's problem better.
 
-**Two LLM steps, both content-hash cached.** llm-wiki-compiler also
-does hash-based change detection. ourowiki's framing is sharper:
-*exactly* two LLM-touching steps (per-turn summarization and per-entity
-synthesis), each with its own cache, each individually inspectable.
-The rest of the pipeline is regex, set arithmetic, and graph traversal.
-This is mostly an ideological framing rather than a capability gap.
+### 11.4 Where the design choices actually live
 
-### 11.4 Where ourowiki is straightforwardly behind
+Three pieces of engineering in ourowiki are genuinely particular to
+the goal and not commodity:
 
-Being honest about the gaps:
+- **Conversation-as-corpus** — the bucketing of sessions into
+  human / subagent / automated, the envelope-stripping, the
+  largest-variant-wins canonical pick across `.deleted.*` /
+  `.reset.*` / `.checkpoint.*` archives, and the per-turn
+  summarization layer that makes per-session pages skim-able. None
+  of the reference implementations have to do any of this because
+  their inputs are static.
+- **Two-tier deterministic linking** — Layer 1 (§6.2) resolves
+  explicit relations and builds a backlink graph; Layer 2
+  (§6.2) scans body prose for unlinked first-mentions of known
+  entity tokens, with case heuristics, protection spans, and a
+  pre-scan idempotence anchor. The reference implementations
+  use LLM-written `[[wikilinks]]`. Both work; ourowiki's choice
+  is the one that survives a cron job.
+- **Editorial preservation in the master index** (§6.1) — the
+  composer regenerates the data-driven sections every run while
+  treating user-curated editorial blocks as opaque pass-through.
+  This is the pattern that lets the user trust automation without
+  losing hand-curation. Reusable beyond ourowiki.
 
-**No `ingest` verb.** ourowiki has no equivalent of
-`llmwiki ingest <url|file>`. Documents enter the corpus only by being
-referenced in conversation. This is a real limitation, not a stylistic
-choice. A `ourowiki ingest <path>` that drops a file into a
-conversation-shaped synthetic source is the highest-priority roadmap
-item.
+These are the places where the engineering actually went. They are
+the parts most likely to be useful to someone with a related problem.
 
-**No `lint` pass.** Karpathy's third operation. llm-wiki-compiler has
-it (broken links, orphans, empty pages, low confidence, contradictions).
-OmegaWiki has `/check`. ourowiki does not. Roadmap §13.2 promises one
-but nothing has been built yet.
+### 11.5 Who might fork this
 
-**No paragraph-level claim citations.** llm-wiki-compiler's
-`^[source.md:42-58]` system pinning specific claims to specific source
-line ranges is a really good idea for auditability. ourowiki's
-entity pages have page-level source attribution in the footer; nothing
-finer-grained.
+Not AI researchers. They are well-served by the existing
+implementations.
 
-**No epistemic metadata.** llm-wiki-compiler tracks `confidence`,
-`provenanceState`, `contradictedBy`, `inferredParagraphs` per page and
-lints on them. ourowiki has no equivalent. Synthesized pages are taken
-at face value.
+The likely audience is other working engineers with the same
+asymmetric memory problem: long-running production work, an
+agent that forgets between sessions, no time for hand-curating a
+wiki, and no patience for `[[link]] [[everything]] [[explicitly]]`
+in LLM-written prose. If that describes you, the parts of this
+repo most likely to be reusable in your context are the
+conversation-as-corpus pipeline and the two-tier linker. The
+editorial-preservation pattern is reusable in a much wider range
+of contexts.
 
-**No candidate / review queue.** llm-wiki-compiler's `compile --review`
-flow lets a human inspect generated pages before they land in `wiki/`.
-ourowiki writes synthesized pages directly to `memory/wiki/`. The
-only safety net is the source-content hash invalidating on changes.
+If you fork ourowiki and end up at a different design point
+because your goals differ from the original author's, that's
+working as intended. The goal of publishing this is not a
+community around a single artifact; it's an engineered example
+of a design point in a crowded space, written down with enough
+detail that other engineers can take what's useful and leave the
+rest.
 
-**No MCP server.** All three reference implementations expose their
-pipelines through Model Context Protocol so any MCP-aware agent can
-drive them. ourowiki is OpenClaw-shaped only. An adapter is
-tractable but not built.
+### 11.6 Vector search and the "is RAG necessary" question
 
-**No page-kind schema.** llm-wiki-compiler distinguishes
-`concept / entity / comparison / overview`; OmegaWiki has nine kinds.
-ourowiki has one implicit kind ("entity page") and the synthesis prompt
-is tuned for it. Adding kinds is mostly prompt engineering.
+A running thread in the public landscape is whether vector RAG is
+still needed when the LLM has compiled a synthesis. Karpathy's
+argument is that at moderate scale it isn't. lucasastorian/llmwiki
+agrees in local mode (FTS5, no embeddings). llm-wiki-compiler
+disagrees and ships embeddings. ourowiki keeps a fine-tuned local
+embedding tier (§10).
 
-### 11.5 Where the white paper itself is the contribution
+The reason ourowiki keeps it: human cognition uses both topic
+navigation ("the wiki layer") and time navigation ("last Tuesday")
+and partial-recall lookup ("that thing about, what was it, the
+linker?"). A topic catalog does the first, a chronological log
+the second, embedded retrieval the third. The user's actual
+queries against this corpus span all three. Picking only one
+breaks the other two.
 
-The reference implementations have READMEs and example outputs. Few
-publish design documents at this depth.
+This is consistent with the design rule above ("the LLM is the
+prose synthesizer of last resort"). Embedding-based retrieval is
+not LLM-driven; it's a fast index over the corpus. There's no
+trade-off between keeping it and minimizing LLM usage.
 
-This is not a particularly strong moat — anyone can write a paper.
-But as of late April 2026, in a landscape of 586 repositories chasing
-the same idea, the engineering rigor of *this document* (idempotence
-proofs, three flagship algorithms walked through, an explicit failure-
-mode table, a costed performance section, and a fair comparison
-section like this one) is a real distinguishing feature. If ourowiki
-attracts forks at all, it will be from people who want to read the
-engineering rather than `npm install` a CLI.
+### 11.7 Comparison table, properly scoped
 
-### 11.6 Vector search lives next door, not in opposition
+The table below compares ourowiki against the reference
+implementations on dimensions where the comparison is meaningful.
+Where a row reads "none" for ourowiki it is *not* a backlog item
+unless the design rationale is missing or wrong.
 
-Karpathy's claim that vector RAG is unnecessary at moderate scale is
-defensible for some audiences. lucasastorian/llmwiki similarly uses
-FTS5 only (no embeddings in local mode); llm-wiki-compiler uses
-embeddings. ourowiki keeps a fine-tuned local embedding tier (§10).
-
-The reason to keep both: human cognition uses both. People navigate
-their own memory by topic ("the wiki layer") and by time ("last
-Tuesday") and by partial recall ("that thing about, what was it, the
-linker?"). A topic catalog does the first, a chronological log the
-second, embedded retrieval the third. Picking only one breaks the
-other two.
-
-### 11.7 Comparison table
-
-| Dimension | Karpathy sketch | llm-wiki-compiler | OmegaWiki | lucasastorian/llmwiki | ourowiki |
+| Dimension | llm-wiki-compiler | OmegaWiki | lucasastorian/llmwiki | ourowiki | Why ourowiki is shaped this way |
 |---|---|---|---|---|---|
-| Primary input | Documents | Documents (URLs/files) | Papers (.tex/.pdf) | Folder of files | Conversation transcripts + daily notes |
-| `ingest` verb | Yes | Yes | `/ingest`, `/discover` | Folder watcher | **No** |
-| `compile` / synthesis | Yes | Two-phase | 24 lifecycle commands | Via MCP from Claude | Per-entity, content-hash cached |
-| `query` verb | Yes | Yes (with `--save`) | `/ask` | Via MCP | No (vector channel handles it) |
-| `lint` pass | Yes | Yes (multi-rule) | `/check` | No | **No** (roadmap) |
-| MCP server | n/a | Yes | Claude Code skills | Yes | **No** (roadmap) |
-| Cross-link style | Implied | `[[wikilinks]]` | `[[wikilinks]]` | LLM-written | **Two-tier deterministic post-pass** |
-| Backlink graph | Not specified | Implicit | Typed graph | Implicit | Auto-generated, in every page |
-| Page-kind schema | Implied | 4 kinds (`concept`/`entity`/...) | 9 kinds | None | One implicit kind |
-| Confidence / provenance metadata | Not specified | `confidence`, `provenanceState`, etc. | Claim graph | None | **None** |
-| Paragraph-level citations | Not specified | `^[file.md:42-58]` | Per-claim edges | None | **None** |
-| Candidate / review queue | Not specified | `compile --review` | Human gates in `/research` | None | **None** |
-| Idempotence claim | Implied | Hash-based incremental | Not emphasized | Not emphasized | Enforced + verified end-to-end |
-| Vector retrieval | Argued unnecessary | Embeddings (configurable) | Implied | FTS5 only (local) | Fine-tuned local embeddings |
-| Pipeline LOC | Conceptual | npm package | Large | Multi-service app | ~4000 LOC, 11 scripts |
-| Distinctive contribution | The pattern | Faithful Karpathy + epistemic metadata | Vertical research lifecycle | UX + filesystem-as-truth | Conversation-input + idempotence + deterministic linking |
+| Primary input | Documents | Papers | Folder of files | Conversation transcripts | The user's working knowledge lives in agent sessions, not a paper folder |
+| `ingest` verb | Yes | Yes | Folder watcher | None | Inputs arrive passively as a side-effect of the user doing their job |
+| Cross-link style | LLM-written `[[wikilinks]]` | LLM-written `[[wikilinks]]` | LLM-written | Two-tier deterministic post-pass | Linking is a regex problem; LLM time is better spent on synthesis |
+| Idempotence | Hash-based incremental | Not emphasized | Not emphasized | Enforced + verified end-to-end | Has to run unattended on a cron without drift |
+| Lint pass | Yes | `/check` | None | None (planned) | Useful for the user; staying on roadmap because the user wants it, not because llm-wiki-compiler has it |
+| Paragraph citations | `^[file:42-58]` | Per-claim edges | None | None | Pages aren't being cited downstream by anyone but the user |
+| Epistemic metadata | Yes | Claim graph | None | None | The downstream consumer is the user, who already knows |
+| Candidate / review queue | `compile --review` | Human gates | None | None | Synthesis errors are cheap to revert; review-before-merge would slow the loop |
+| MCP server | Yes | Yes | Yes | None | One agent runtime; portability isn't a goal |
+| Page-kind schema | 4 kinds | 9 kinds | None | One implicit kind | All pages are about recurring projects; one shape works |
+| Vector retrieval | Configurable embeddings | Implied | FTS5 only (local) | Fine-tuned local embeddings | Partial-recall queries are real; topic + time + recall need separate channels |
+| Primary audience | AI researchers, knowledge workers | AI research labs | Personal research workflows | One engineer with shipped production code | The system was built for one specific person |
+
+The "why ourowiki is shaped this way" column is the actual content
+of this section. The features ourowiki doesn't have are
+overwhelmingly answers to questions the system isn't being asked.
 
 ### 11.8 Honest summary
 
-ourowiki is not the most faithful Karpathy implementation —
-llm-wiki-compiler is. ourowiki is not the most ambitious application of
-the pattern — OmegaWiki is. ourowiki is not the most polished
-user-facing variant — lucasastorian/llmwiki has the browser UI.
+Karpathy and the 586 repos are accelerating AI research tooling.
+This paper documents a continuity layer for one engineer's agent.
+The two are adjacent in pattern (LLM-synthesized markdown wiki)
+and orthogonal in goal.
 
-ourowiki is a different design point: **conversation history as
-primary input, deterministic-by-default with the LLM as the prose
-synthesizer of last resort, two-tier idempotent linking that lives in
-code rather than prompt engineering.** The contribution is the
-design and the engineering writeup, not the surface area covered.
+ourowiki isn't behind llm-wiki-compiler. It isn't ahead of it
+either. They're solving different problems with overlapping
+techniques. If you're looking for the most faithful Karpathy
+implementation, that's llm-wiki-compiler. If you're looking for an
+agent-continuity layer for a working engineer, that's this one.
 
-If someone forks this repo, the most likely reason is they want to
-read the algorithm walkthroughs in §6 or apply the conversation-input
-idea to their own agent runtime. Both are uses I'd be happy with.
-
-The takeaway from comparing against the live implementations rather
-than just the sketch: the sketch has more concrete engineering inside
-it than the sketch lets on, *and* the design space around it is wider
-than any single implementation captures. ourowiki occupies a corner
-of that space the others don't. The other corners are also being
-occupied, well, by people who shipped this week.
+The distinctive engineering — conversation-as-corpus,
+two-tier deterministic linking, editorial-preservation in the
+composer — is documented because it might be useful to someone
+with a related problem, not because it's a competitive moat. The
+moat is your goals; the engineering is just what falls out of
+taking them seriously.
 
 ---
 
@@ -863,69 +904,40 @@ To set expectations precisely:
 
 ## 13. Roadmap
 
-The §11 comparison made the priority order clear. Roughly in descending
-order of "how much would this close a real gap with the public
-implementations."
+In descending order of "how much would this make the user's working
+life better":
 
-1. **`ourowiki ingest <path>` verb.** Drop a paper / PDF / URL into a
-   `sources/` directory and let it become a synthesizable input
-   alongside conversation transcripts. This is the largest gap with
-   llm-wiki-compiler and OmegaWiki, and the highest-leverage thing
-   to build. Easiest implementation: write a small wrapper that
-   converts the ingested file into a synthetic "session" (single
-   turn, the file content as the user message, an empty assistant
-   message), and let the existing pipeline pick it up. No new tier,
-   minimal new code.
-2. **Lint pass.** Karpathy's third operation. llm-wiki-compiler and
-   OmegaWiki both have it. Detect contradictions inside an entity
-   page (claim X on date A, contradicted on date B with no
-   resolution), orphan entities (in `index.md` cluster list but page
-   never synthesized), missing cross-references that the LLM didn't
-   propose, broken backlinks. Genuinely an LLM job because it's
-   semantic; would become the third LLM-touching step.
-3. **Paragraph-level claim citations.** Adopt llm-wiki-compiler's
-   `^[source.md:42-58]` pattern in the synthesis prompt and add a
-   linter rule that validates the line ranges resolve. This raises
-   the auditability of every synthesized page substantially for
-   modest prompt-engineering effort.
-4. **Epistemic frontmatter.** `confidence`, `provenanceState`,
-   `contradictedBy` per page, again following llm-wiki-compiler's
-   schema. Synthesis prompt asks for these directly; lint rules
-   surface them; merging logic for entities with multiple sources
-   reconciles them.
-5. **Candidate / review queue.** A `--review` mode that writes
-   synthesized pages to `memory/wiki/.candidates/` instead of
-   directly into `memory/wiki/`, with `approve` / `reject`
-   subcommands. Useful when the synthesis prompt is being changed
-   or when adding a new entity for the first time.
-6. **MCP server.** Expose `ingest` / `compile` / `query` / `lint` as
-   MCP tools so the pipeline can be driven from any MCP-aware agent,
-   not just OpenClaw. The reference implementations all do this.
-7. **Shared `wiki_common.py` module.** Four scripts duplicate
+1. **Lint pass.** Catch contradictions across daily logs (claim X on
+   date A, contradicted on date B with no resolution), orphan
+   entities (in `index.md` cluster list but page never synthesized),
+   missing cross-references the synthesis prompt didn't propose,
+   broken backlinks. Genuinely an LLM job because most of it is
+   semantic; would become the third LLM-touching step. The user has
+   already noticed contradictions in `MEMORY.md` that a lint pass
+   would have caught.
+2. **Shared `wiki_common.py` module.** Four scripts duplicate
    `slugify()` and three share `discover_pages()` and the
-   primary-token alias dict. Mechanical refactor; should land before
-   any of the bigger items above.
-8. **Adapter for non-JSONL transcript formats.** Generalize the
-   session ingester so other agent runtimes (a stripped-down
-   "transcript adapter" with `.parse_session(path) → list[Turn]`)
-   can plug in. Pairs naturally with item 1 — a Codex transcript
-   or a Cursor chat history is just another shape of session.
-9. **Page-kind schema.** Following llm-wiki-compiler's
-   `concept / entity / comparison / overview` distinction (or some
-   subset). Mostly prompt engineering; the rendering pipeline is
-   already shape-agnostic.
-10. **Per-day rollup pages.** Sessions group by month; daily logs
-    should also have per-week or per-month rollups for navigation.
-11. **Public-corpus mode.** A flag that scrubs `MEMORY.md` and
-    replaces real names with anonymized handles, suitable for
-    showing the system's pipeline without leaking the user's life.
-    Also useful for a future repo example workspace.
-12. **Smaller embedding model on smaller hardware.** Make the vector
-    tier optional so the wiki alone is useful on a Raspberry Pi.
+   primary-token alias dict. Mechanical refactor that pays off the
+   next time anything changes in those shared paths.
+3. **Per-week or per-month daily-log rollups.** Sessions are grouped
+   by month; daily logs aren't. A weekly rollup with the headlines
+   from each day would close the navigation gap.
+4. **Public-corpus mode.** A flag that scrubs `MEMORY.md` and
+   replaces real names with anonymized handles, suitable for
+   showing the pipeline without leaking the user's life. Also
+   useful for the repo's example workspace.
+5. **Smaller embedding model on smaller hardware.** Make the vector
+   tier optional so the wiki alone is useful on a Raspberry Pi or a
+   laptop without a fine-tuned bge-small server running.
 
-Items 1–6 close concrete gaps with the public implementations.
-Items 7–12 are quality-of-life improvements that the comparison
-didn't change priority on.
+Notably *not* on the roadmap, despite being standard in the
+reference implementations: an `ingest` verb, an MCP server, paragraph-
+level citations, epistemic frontmatter, a candidate review queue, a
+page-kind schema. §11.3 explains why each one is a non-goal in this
+system's context.
+
+If you fork ourowiki and your goals are different from the original
+author's, your roadmap will look different. That's expected.
 
 ---
 
