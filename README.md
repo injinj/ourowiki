@@ -57,11 +57,14 @@ that lets it skip RAG) or a thing the human produces for the human
 fact that an LLM does the synthesis is an implementation detail.
 
 ourowiki is **complementary**, not competitive, to issue / commit /
-PR-driven agent workflows like clawbot. Those tools maintain the
-*external* record of a project (what got merged, what's broken,
-what's blocked); ourowiki maintains the *internal* record (what was
-decided and why). An engineer resuming dormant work needs both. See
-the white paper's §12 for the full split.
+PR-driven agent workflows — e.g. [ClawSweeper](https://github.com/openclaw/openclaw/blob/main/.github/workflows/clawsweeper-dispatch.yml)
+(an issue-triage bot in the OpenClaw upstream repo) and the broader
+class of release-note generators, autonomous-PR agents, and
+commit-log digesters. Those tools maintain the *external* record of
+a project (what got merged, what's broken, what's blocked);
+ourowiki maintains the *internal* record (what was decided and why).
+An engineer resuming dormant work needs both. See the white paper's
+§12 for the full split.
 
 If you're looking for a Karpathy-faithful implementation of the
 LLM-wiki pattern with `ingest` / `compile` / `query` / `lint` verbs,

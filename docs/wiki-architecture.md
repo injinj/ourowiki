@@ -912,11 +912,14 @@ taking them seriously.
 A wiki of synthesized entity pages is one half of a project's memory.
 The other half lives in version control and issue trackers — the
 public record of what got merged, what got reverted, what was filed
-as a bug, what was closed as won't-fix, what blocked what. Tools that
-drive an agent against that history (clawbot-style issue triage,
-GitHub PR review bots, commit-log digesters, release-note generators)
-are doing something genuinely different from what ourowiki does, and
-the two are best understood as complementary.
+as a bug, what was closed as won't-fix, what blocked what. A growing
+class of agent workflows reasons about that record directly:
+automated issue triage (e.g. ClawSweeper, the GitHub-Actions-driven
+triage bot in the OpenClaw upstream repo, which walks the codebase to
+verify issue claims), PR-review bots, commit-log digesters,
+release-note generators, and so on. These tools are doing something
+genuinely different from what ourowiki does, and the two are best
+understood as complementary.
 
 A way to draw the split:
 
@@ -924,8 +927,9 @@ A way to draw the split:
   review comments. Public (or at least team-visible). Records *what
   changed* and *who reviewed it*. Time-ordered, immutable, indexed by
   the host platform's search. Tools that reason about this record
-  (clawbot, Conventional-commit summarizers, autonomous-PR agents) work
-  by walking the history and inferring intent from diffs and comments.
+  (ClawSweeper-style triage bots, Conventional-commit summarizers,
+  autonomous-PR agents) work by walking the history and inferring
+  intent from diffs and comments.
 
 - **Internal record** — conversations between the engineer and the
   agent in which the design got argued out, the bug got chased, the
@@ -959,13 +963,14 @@ ignores git status, doesn't crawl issues, doesn't cite commits in
 entity pages (though sources sometimes mention them in passing).
 That's a deliberate scope boundary, not an oversight. The external
 record is already an excellent first-class artifact maintained by
-GitHub and git itself; tools like clawbot are already excellent
+GitHub and git itself; tools like ClawSweeper are already excellent
 readers of it. ourowiki sits next to those tools, not in their place.
 
 The practical setup an engineer ends up with:
 
-- **clawbot or similar** — maintains the external record, surfaces
-  GitHub issues to triage, drafts PRs, summarizes review feedback.
+- **External-record agents** (ClawSweeper-style issue triage,
+  PR-review bots, commit summarizers, release-note generators) —
+  maintain the read view of the project's public history.
 - **ourowiki** — maintains the internal record, surfaces the
   conceptual state of long-running projects, lets a fresh agent (or
   a returning human) pick up where things were left off.
